@@ -39,9 +39,10 @@ a.game{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px so
 .teams{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
 .trow{display:flex;align-items:center;gap:8px;font-size:15px;min-width:0}
 .rank{width:18px;flex:none;text-align:right;font-size:11px;color:var(--acc)}
-.logo{width:24px;height:24px;flex:none;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
-.logo img{width:100%;height:100%;object-fit:contain}
-.logo.fb{border:1px dashed var(--logo);background:var(--card);color:var(--sub);font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:600}
+/* logos: square box, transparent, nothing clipped; only the text fallback is a circle */
+.logo{width:32px;height:32px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:transparent}
+.logo img{width:100%;height:100%;object-fit:contain;display:block}
+.logo.fb{width:28px;height:28px;margin:2px;border-radius:50%;border:1px dashed var(--logo);background:var(--card);color:var(--sub);font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:600;overflow:hidden}
 .tname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
 .tname small{font-size:11px;color:var(--sub);font-weight:400;margin-left:5px;font-family:'IBM Plex Mono',monospace}
 .lost{color:var(--sub)}
@@ -62,8 +63,8 @@ a.game{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px so
 .ghead{display:flex;flex-direction:column;gap:10px;padding:14px 0 6px}
 .gstat{display:flex;justify-content:space-between;font-size:12px;font-weight:600;font-family:'IBM Plex Mono',monospace;color:var(--sub)}
 .big{display:flex;align-items:center;gap:10px;font-size:19px;min-width:0}
-.big .logo{width:36px;height:36px}
-.big .logo.fb{font-size:9px}
+.big .logo{width:48px;height:48px}
+.big .logo.fb{width:40px;height:40px;margin:4px;font-size:9px}
 .big .score{font-size:30px}
 .big .tname{font-size:19px}
 .star{width:40px;height:40px;border:0;background:transparent;color:var(--dim);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;flex:none}
@@ -78,7 +79,7 @@ section.blk h3{margin:0 0 4px;font-size:13px;font-weight:700;letter-spacing:.1em
 .per{font-size:11px;color:var(--sub);font-weight:600;margin:12px 0 0;text-transform:uppercase;letter-spacing:.06em;font-family:'IBM Plex Mono',monospace}
 .goal{display:flex;gap:12px;align-items:center;padding:11px 0;border-top:1px solid var(--rule)}
 .goal .when{width:44px;flex:none;font-size:11px;font-weight:600;color:var(--sub);line-height:1.45;font-family:'IBM Plex Mono',monospace}
-.goal .logo{width:28px;height:28px}
+.goal .logo{width:32px;height:32px}
 .goal .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .goal .who{font-size:14px;font-weight:600}
 .goal .ast{font-size:12px;color:var(--sub)}
@@ -208,14 +209,72 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
   }
   function sbPath(d) { var p = d.split('-'); return '/scoreboard/' + CFG.sport + '/' + CFG.div + '/' + p[0] + '/' + p[1] + '/' + p[2] + '/all-conf'; }
 
+  // ---- conferences ------------------------------------------------------
+  // The feed's conference field is used first; this list is the backup (2026-27 membership).
+  function normName(s) { return String(s || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim(); }
+  var TEAM_CONF = {};
+  (function () {
+    var C = {
+      'NCHC': ['arizona st', 'arizona state', 'colorado col', 'colorado college', 'denver', 'miami', 'miami oh', 'miami ohio', 'minn duluth', 'minnesota duluth', 'umd',
+        'north dakota', 'omaha', 'nebraska omaha', 'st cloud st', 'st cloud state', 'saint cloud state', 'western mich', 'western michigan',
+        'st thomas', 'st thomas mn', 'st thomas minn', 'saint thomas', 'st thomas minnesota'],
+      'Big Ten': ['michigan', 'michigan st', 'michigan state', 'minnesota', 'notre dame', 'ohio st', 'ohio state', 'penn st', 'penn state', 'wisconsin'],
+      'Hockey East': ['boston college', 'boston col', 'boston u', 'boston univ', 'boston university', 'uconn', 'connecticut', 'maine', 'massachusetts', 'umass', 'umass amherst',
+        'umass lowell', 'mass lowell', 'massachusetts lowell', 'merrimack', 'new hampshire', 'northeastern', 'providence', 'vermont'],
+      'ECAC Hockey': ['brown', 'clarkson', 'colgate', 'cornell', 'dartmouth', 'harvard', 'princeton', 'quinnipiac', 'rpi', 'rensselaer', 'st lawrence', 'saint lawrence', 'union', 'union ny', 'yale'],
+      'CCHA': ['augustana', 'augustana sd', 'bemidji st', 'bemidji state', 'bowling green', 'ferris st', 'ferris state', 'lake superior st', 'lake superior state', 'lake superior',
+        'michigan tech', 'minnesota st', 'minnesota state', 'minn st mankato', 'minnesota st mankato', 'minnesota state mankato', 'northern mich', 'northern michigan'],
+      'Atlantic Hockey America': ['air force', 'american intl', 'american int l', 'american international', 'aic', 'army', 'army west point', 'bentley', 'canisius', 'holy cross',
+        'mercyhurst', 'niagara', 'rit', 'rochester inst', 'robert morris', 'sacred heart'],
+      'Independent': ['alaska', 'alaska fairbanks', 'alaska anchorage', 'lindenwood', 'liu', 'long island', 'stonehill', 'tennessee st', 'tennessee state']
+    };
+    Object.keys(C).forEach(function (conf) { C[conf].forEach(function (a) { TEAM_CONF[a] = conf; }); });
+  })();
+  var GENERIC_CONF = /^(d ?i|di|d1|division i|top 25|all|all conf|all conferences|ncaa|men s ice hockey)$/;
+  function canonConf(n) {
+    var k = String(n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!k) return '';
+    if (k.indexOf('nchc') >= 0 || k.indexOf('nationalcollegiate') >= 0) return 'NCHC';
+    if (k === 'bigten' || k === 'big10' || k === 'b1g') return 'Big Ten';
+    if (k.indexOf('hockeyeast') >= 0) return 'Hockey East';
+    if (k.indexOf('ecac') >= 0) return 'ECAC Hockey';
+    if (k.indexOf('ccha') >= 0 || k.indexOf('centralcollegiate') >= 0) return 'CCHA';
+    if (k.indexOf('atlantic') >= 0 || k === 'aha') return 'Atlantic Hockey America';
+    if (k.indexOf('independent') >= 0 || k === 'ind') return 'Independent';
+    return String(n).trim();
+  }
+  function teamConfs(t, n) {
+    var out = [];
+    var list = Array.isArray(t.conferences) ? t.conferences : [];
+    list.forEach(function (c) {
+      var name = typeof c === 'string' ? c : (c.conferenceName || c.name || c.conferenceSeo || '');
+      if (name && !GENERIC_CONF.test(normName(name))) out.push(canonConf(name));
+    });
+    if (t.conference) out.push(canonConf(t.conference));
+    if (!out.length) {
+      var tries = [normName(n.short), normName(String(n.seo || '').replace(/-/g, ' ')), normName(n.full), normName(n.short).replace(/ university$/, '')];
+      for (var i = 0; i < tries.length; i++) { if (tries[i] && TEAM_CONF[tries[i]]) { out.push(TEAM_CONF[tries[i]]); break; } }
+    }
+    return out;
+  }
+  function gameConf(a, h) {
+    for (var i = 0; i < a.confs.length; i++) {
+      if (a.confs[i] !== 'Independent' && h.confs.indexOf(a.confs[i]) >= 0) return a.confs[i];
+    }
+    if (a.confs.length && h.confs.length) return 'Non-conference';
+    return 'Other games'; // we couldn't tell; don't claim non-conference
+  }
+
   function normGame(raw) {
     var g = raw && raw.game ? raw.game : raw || {};
     var st = String(g.gameState || '').toLowerCase();
     var kind = (st === 'live' || st === 'in_progress' || st === 'inprogress') ? 'live' : (st === 'final' ? 'final' : 'pre');
     function side(t) {
       t = t || {}; var n = t.names || {};
-      var conf = t.conferences && t.conferences[0] ? (t.conferences[0].conferenceName || '') : '';
+      var confs = teamConfs(t, n);
+      var conf = confs[0] || '';
       return {
+        confs: confs,
         seo: n.seo || '', name: n.short || n.full || n.char6 || 'TBD',
         abbr: n.char6 || String(n.short || '').slice(0, 4).toUpperCase(),
         score: (t.score === '' || t.score == null) ? '' : String(t.score),
@@ -234,7 +293,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
       s2 = g.network || '';
     }
     return { id: id, kind: kind, away: a, home: h, s1: s1, s2: s2,
-      conf: (a.conf && a.conf === h.conf) ? a.conf : 'Non-conference', epoch: +g.startTimeEpoch || 0 };
+      conf: gameConf(a, h), epoch: +g.startTimeEpoch || 0 };
   }
 
   // scoring summary -> [{title, num, goals:[{time, abbr, seo, home, who, ast, tag, score}]}]
@@ -381,7 +440,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
       games.forEach(function (g) { if (isFav(g.away.seo) || isFav(g.home.seo)) add('★ My teams', g); });
       games.forEach(function (g) { if (!(isFav(g.away.seo) || isFav(g.home.seo))) add(g.conf, g); });
       groups.sort(function (x, y) {
-        function w(n) { if (n.charAt(0) === '★') return -1; if (n === 'Non-conference') return 99; var i = CONF_ORDER.indexOf(n); return i < 0 ? 50 : i; }
+        function w(n) { if (n.charAt(0) === '★') return -1; if (n === 'Other games') return 100; if (n === 'Non-conference') return 99; var i = CONF_ORDER.indexOf(n); return i < 0 ? 50 : i; }
         return w(x) - w(y) || x.localeCompare(y);
       });
       var rankOrder = { live: 0, pre: 1, final: 2 };
