@@ -23,6 +23,8 @@ export async function GET() {
   const confs = ['nchc', 'big-ten', 'hockey-east', 'ecac', 'ecac-hockey', 'ccha', 'atlantic-hockey', 'aha', 'atlantic-hockey-america', 'independents', 'independent'];
   const out = { generatedAt: new Date().toISOString(), standings: {} };
   for (const c of confs) { out.standings[c] = await get(`${CHI}/conferences/${c}/standings27.php`); await sleep(300); }
+  out.chn_npi = await get('https://www.collegehockeynews.com/ratings/npi');
+  await sleep(300);
   out.team_denver = await get(`${CHI}/teams/denver/index.php`, true);
   await sleep(300);
   const rosterLink = (out.team_denver.links || []).find(h => /roster/i.test(h));
