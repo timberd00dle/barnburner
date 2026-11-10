@@ -1,48 +1,35 @@
-# Barnburner — V1
+# Barnburner
 
-A personal live college hockey scoreboard (D-I men). It's a phone web app on Vercel, with code on GitHub.
+A personal live college hockey app (D-I men) for a handful of friends. It's a phone web app on Vercel; code lives on GitHub, and every push to `main` redeploys it.
 
-**What V1 does**
-- Daily scores grouped by conference, with previous/next day and a calendar picker
-- Live games refresh every 30 s; other games on today's date every 5 min. Refreshing pauses when the app is in the background.
-- Box score page with scoring blocks (period/time, scorer, assists, PPG/SHG/EN tag, running score), a line score, team stats bars and player stats
-- Team logos (fall back to the abbreviation if a logo is missing)
-- Follow teams (★ on a game page) → they're pinned to the top of Scores (saved on each phone)
-- Light/dark mode, and "Updated Xs ago" so you can tell a stale feed from a slow game
-- A **Raw feed** tab on every game, showing exactly what the data source sent
+## Screens
+- **Scores**: daily games by conference, a date picker, "Ranked by" NPI / USCHO / USA Hockey, records, and followed teams pinned on top. Live games refresh every 30 s.
+- **Game**: Summary (scoring blocks, line score with shots, team stat bars), Box (skaters and goalies), Plays (play-by-play, newest first). A "Raw feed" link shows exactly what the source sent.
+- **Standings**: each conference's points, conference record and overall record, with NPI rank.
+- **NPI**: NPI table with both poll ranks alongside, plus full USCHO and USA Hockey polls.
+- **Stats**: national skater and goalie leaders, filterable by conference and sortable.
+- **Teams**: every D-I team by conference with follow stars. A team page shows record, ranks, roster with stats, and team stats with D-I ranks.
 
-**Not in V1:** standings, NPI, poll toggle, league stats, team pages, news, and the cross-check against school live stats. Those come in V2.
+## Where the data comes from
+| Data | Source | Cached |
+|---|---|---|
+| Scores, box scores, play-by-play, logos | NCAA (via ncaa-api) | 15–20 s |
+| NPI | College Hockey News (follows the NCAA's published method) | 30 min |
+| USCHO poll | NCAA (via ncaa-api) | 30 min |
+| USA Hockey poll | American Hockey Coaches Association | 30 min |
+| Standings, player and team stats | College Hockey Inc. | 10–15 min |
 
-## How it works
-
-```
-phones ──> Vercel (/api/proxy, CDN-cached 15–20 s) ──> ncaa-api ──> ncaa.com
-```
-
-## Deploy
-
-1. Push this folder to a new GitHub repo (e.g. `barnburner`).
-2. In Vercel: **Add New → Project →** import the repo. Framework preset: **Other**. Leave the build and output settings empty, then click Deploy.
-3. Open the URL on your phone, then use Share → **Add to Home Screen**.
-
-Every push to `main` redeploys automatically.
-
-To preview with sample data and no live feed, add `?demo=1` to the URL.
-
-**Optional environment variables** (Vercel → Settings → Environment Variables):
-- `UPSTREAM` — point at your own self-hosted ncaa-api if the public demo server gets flaky (`docker run -p 3000:3000 henrygd/ncaa-api`)
-- `NCAA_HEADER_KEY` — only if your self-hosted copy requires a key
-
-## Free-tier math
-
-Five phones polling every 30 s during a four-hour game night is about 2,400 requests. Most of them are answered from Vercel's CDN cache, so this is well within the Hobby plan.
-
-## First live night: please check
-
-The scores list uses well-documented feed fields. The box score parsing hasn't been tested against a live hockey game yet. If a box score looks off, open **Raw feed** on that game and send a screenshot or copy.
+Everything is fetched by `api/` on Vercel and cached at its CDN, so the sources see one visitor no matter how many phones are open. These are public pages, not official APIs: if one changes its layout, that screen shows an error until its parser is updated.
 
 ## Files
+- `index.html`: the whole app (no build step)
+- `api/proxy.js`: relay for NCAA game data and logos (retries once on rate limits)
+- `api/data.js`: rankings, standings and stats from the pages above, as JSON
+- `vercel.json`: routes
 
-- `index.html` — the whole app (HTML/CSS/JS, no build step)
-- `api/proxy.js` — data relay + caching
-- `vercel.json` — routes `/api/*` to the relay
+Add `?demo=1` to the URL to see the app with sample data.
+
+## Known gaps
+- Team rosters list players who have played this season (from the stats tables), with no jersey numbers.
+- The "Team site" button uses a web search to open the school's site.
+- No team schedule tab yet.
