@@ -34,6 +34,11 @@ export async function GET(request) {
   let up;
   try {
     up = await fetch(target, { headers });
+    // The public data source rate-limits bursts (answers 428/429): wait a moment and try once more.
+    if (up.status === 428 || up.status === 429) {
+      await new Promise(r => setTimeout(r, 1200));
+      up = await fetch(target, { headers });
+    }
   } catch (e) {
     return json({ error: 'data source unreachable' }, 502);
   }
