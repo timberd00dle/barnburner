@@ -33,3 +33,10 @@ Add `?demo=1` to the URL to see the app with sample data.
 - Team rosters list players who have played this season (from the stats tables), with no jersey numbers.
 - The "Team site" button uses a web search to open the school's site.
 - No team schedule tab yet.
+
+## V3
+- Team page: Roster (school roster with jersey numbers + headshots, merged with season stats), Schedule (College Hockey Inc. national schedule), Team stats with D-I ranks.
+- Official team site link for all 62 programs (`SITES` in api/data.js).
+- Game feed: penalties in Summary and Plays; box score PEN shown as count (minutes).
+- `/api/data?type=roster&team=<key>` (12h cache) and `type=schedule` (15 min).
+- 8 schools whose roster pages don't parse fall back to numbers from the latest NCAA box score (no photos).

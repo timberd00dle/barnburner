@@ -347,7 +347,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
   function sbPath(d) { var p = d.split('-'); return '/scoreboard/' + CFG.sport + '/' + CFG.div + '/' + p[0] + '/' + p[1] + '/' + p[2] + '/all-conf'; }
 
   // rankings / standings / stats / meta: shared across pages, kept a few minutes
-  var TTL = { rankings: 30, standings: 10, stats: 15, meta: 1440 };
+  var TTL = { rankings: 30, standings: 10, stats: 15, meta: 1440, schedule: 15 };
   var mem = {};
   function getData(type) {
     var key = 'data:' + type, now = Date.now();
@@ -362,6 +362,12 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
       if (type === 'rankings') absorbRankings(v);
       return v;
     }).catch(function (e) { if (saved) return saved.v; throw e; });
+  }
+  function getRoster(key) {
+    var k = 'roster:' + key, now = Date.now(), saved = store.get(k, null);
+    if (saved && now - saved.t < 12 * 3600000) return Promise.resolve(saved.v);
+    var p = DEMO ? Promise.resolve({ data: demoData('/data/roster'), at: new Date() }) : api('/data?type=roster&team=' + encodeURIComponent(key));
+    return p.then(function (res) { var v = res.data; store.set(k, { t: now, v: v }); return v; }).catch(function (e) { if (saved) return saved.v; throw e; });
   }
   function absorbMeta(m) {
     (m.schools || []).forEach(function (s) {
@@ -486,7 +492,8 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
         var isG = /^G$/i.test(r.position || '') || (+r.goalieMinutes > 0);
         var base = { name: name, num: r.number != null ? String(r.number) : (r.jersey || r.uniformNumber || ''), pos: r.position || '' };
         if (isG) goalies.push(Object.assign(base, { min: r.goalieMinutes, sv: r.saves, ga: r.goalsAllowed, svpct: (+r.saves + +r.goalsAllowed) > 0 ? fmt3(+r.saves / (+r.saves + +r.goalsAllowed)) : '' }));
-        if (!isG || +r.goals || +r.assists) skaters.push(Object.assign({}, base, { g: r.goals, a: r.assists, sog: r.shots, pm: r.plusminus, pim: r.minutes, fo: (r.facewon != null && (+r.facewon + +r.facelost) > 0) ? r.facewon + '-' + r.facelost : '', blk: r.blk }));
+        if (!isG || +r.goals || +r.assists) skaters.push(Object.assign({}, base, { g: r.goals, a: r.assists, sog: r.shots, pm: r.plusminus, pim: r.minutes, fo: (r.facewon != null && (+r.facewon + +r.facelost) > 0) ? r.facewon + '-' + r.facelost : '', blk: r.blk,
+          pen: (+r.count > 0 || +r.minutes > 0) ? (r.count != null ? r.count : '?') + ' (' + (r.minutes || 0) + ')' : '0' }));
       });
       return { name: m.name || m.abbr || 'Team', abbr: m.abbr, home: m.home, skaters: skaters, goalies: goalies, teamStats: t.teamStats || null };
     }).filter(Boolean);
@@ -511,20 +518,38 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
     row('Power play', 'powerPlayGoals', function (x) { return (x.powerPlayGoals || 0) + '/' + (x.powerPlayOpportunities || 0); });
     row('Faceoffs won', 'facewon');
     row('Blocked shots', 'blk');
-    row('Penalty minutes', 'minutes');
+    row('Penalties (min)', 'count', function (x) { return (x.count || 0) + ' (' + (x.minutes || 0) + ')'; });
     return { rows: src, shotsByPeriod: { a: String(A.shotsByPeriod || ''), h: String(H.shotsByPeriod || '') } };
+  }
+  function flipName(n) { var m = String(n || '').match(/^\s*([^,]+),\s*(.+?)\s*$/); return m ? m[2] + ' ' + m[1] : String(n || '').trim(); }
+  function parsePenalty(text) {
+    // "Penalty on Blais, Alexandre UCONN 2 minutes for holding."
+    var m = String(text || '').match(/^\s*Penalty on\s+(.+?)\s+([A-Z][A-Z0-9.&\-]{1,7})\s+(\d+)\s+minutes?\s+for\s+(.+?)\.?\s*$/i);
+    if (!m) { if (!/penalty/i.test(text)) return null; var mm = String(text).match(/(\d+)\s+minutes?/i); return { who: '', team: '', min: mm ? +mm[1] : null, what: String(text).replace(/\.$/, '') }; }
+    return { who: flipName(m[1]), team: m[2], min: +m[3], what: m[4].replace(/\s+/g, ' ') };
   }
   function normPlays(raw) {
     if (!raw || !Array.isArray(raw.periods)) return null;
     var tm = teamsMeta(raw);
     var out = raw.periods.map(function (p, i) {
-      var list = p.playbyplayStats || p.plays || p.playStats || [];
+      var stats = p.playbyplayStats || p.plays || p.playStats || [];
+      // newer feed: each entry has { clock, teamId, plays: [{ playText, homeScore, visitorScore }] }
+      var list = [];
+      stats.forEach(function (st) {
+        if (Array.isArray(st.plays) && st.plays.length) st.plays.forEach(function (x) { list.push(Object.assign({ clock: st.clock, teamId: st.teamId }, x)); });
+        else list.push(st);
+      });
       return { title: p.periodDisplay ? p.periodDisplay + (/\d/.test(p.periodDisplay) ? ' period' : '') : ordinal(p.periodNumber || i + 1) + ' period',
+        num: +p.periodNumber || i + 1,
         plays: list.map(function (pl) {
-          var text = pl.eventDescription || pl.description || pl.playText || pl.text || pl.visitorText || pl.homeText || '';
+          var text = pl.playText || pl.eventDescription || pl.description || pl.text || pl.visitorText || pl.homeText || '';
           if (!text) text = Object.keys(pl).filter(function (k) { return k !== '__typename' && !/id$/i.test(k) && typeof pl[k] === 'string' && pl[k].length > 3 && !/^\d+[:.]?\d*$/.test(pl[k]); }).map(function (k) { return pl[k]; }).join(' · ');
           var t = tm[String(pl.teamId)] || {};
-          return { time: pl.clock || pl.time || pl.gameClock || '', text: text, team: t.abbr || pl.teamAbbr || '', score: pl.score || ((pl.visitScore != null && pl.homeScore != null) ? pl.visitScore + '–' + pl.homeScore : ''), goal: /goal/i.test(text) && !/goalie|goaltender/i.test(text) };
+          var vs = pl.visitScore != null ? pl.visitScore : pl.visitorScore;
+          var pen = /^\s*penalty/i.test(text) ? parsePenalty(text) : null;
+          return { time: pl.clock || pl.time || pl.gameClock || '', text: text, team: t.abbr || pl.teamAbbr || '', seo: t.seo || '', home: !!t.home,
+            score: pl.score || ((vs != null && pl.homeScore != null) ? vs + '–' + pl.homeScore : ''),
+            goal: /^\s*goal\b|\bgoal by\b/i.test(text) && !/goalie|goaltender|at goal/i.test(text), pen: pen };
         }).filter(function (x) { return x.text; }) };
     }).filter(function (p) { return p.plays.length; });
     return out.length ? out : null;
@@ -843,16 +868,17 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
   // ---- team page ------------------------------------------------------
   function renderTeam(key) {
     setNav('teams');
-    var tab = 'roster';
+    var tab = store.get('teamTab', 'roster');
     view.innerHTML = '<div class="bar" style="flex-direction:row;justify-content:space-between;align-items:center;padding:4px 8px"><a class="back" href="#/teams">' + CHEV_L + 'All teams</a><span id="favSlot"></span></div><main id="body"></main>';
-    var idx = rankIndex(null), st = null, stats = null;
+    var idx = rankIndex(null), st = null, stats = null, ros = null, sched = null;
     function name() { return (learned[key] && learned[key].name) || titleCase(key); }
     function confRow() {
       if (!st || !st.conferences) return null;
-      var c = TEAM_CONF[key]; var rows = st.conferences[c];
+      var rows = st.conferences[TEAM_CONF[key]];
       if (!Array.isArray(rows)) return null;
       return rows.filter(function (r) { return canon(r.team) === key; })[0] || null;
     }
+    function ordinalPlace(n) { n = +n; var s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
     function paint() {
       var el = document.getElementById('body'); if (!el) return;
       var t = teamInfo(key); t.name = name();
@@ -860,37 +886,92 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
       document.getElementById('favSlot').innerHTML = '<button class="star" type="button" id="favBtn" aria-pressed="' + fav + '" aria-label="' + (fav ? 'Unfollow ' : 'Follow ') + esc(t.name) + '">' + STAR + '</button>';
       document.getElementById('favBtn').onclick = function () { toggleFav(t); paint(); };
       var cr = confRow();
+      var site = ros && ros.site;
       var html = '<div class="thero">' + logo(t) + '<div><h1 class="cond">' + esc(t.name) + '</h1><span class="sub">' + esc(t.conf || '') + '</span></div></div>';
       html += '<table class="rec"><thead><tr><th scope="col">OVERALL</th><th scope="col">CONF</th><th scope="col">NPI</th><th scope="col">USCHO</th><th scope="col">USAH</th></tr></thead><tbody><tr>' +
         '<td>' + esc(idx.record[key] || (cr ? cr.ow + '-' + cr.ol + '-' + cr.ot : '—')) + '</td><td>' + (cr ? cr.w + '-' + cr.l + '-' + cr.t : '—') + '</td>' +
         '<td style="color:var(--acc)">' + (idx.npi[key] ? '#' + idx.npi[key] : '—') + '</td><td>' + (idx.uscho[key] ? '#' + idx.uscho[key] : '—') + '</td><td>' + (idx.usah[key] ? '#' + idx.usah[key] : '—') + '</td></tr></tbody></table>';
       html += '<div class="row" style="justify-content:space-between;margin-bottom:12px"><span class="note">' + (cr ? esc(ordinalPlace(cr.rank)) + ' in ' + esc(CONF_SHORT[t.conf] || t.conf) + ' · ' + (cr.pts == null ? '' : cr.pts + ' pts') : '') + '</span>' +
-        '<a class="outbtn" href="https://www.google.com/search?btnI=1&q=' + encodeURIComponent(t.name + ' men\'s ice hockey official site') + '" target="_blank" rel="noopener">Team site' + OUT + '</a></div>';
-      html += '<div class="tabs" role="tablist" aria-label="Team views"><button class="chip" role="tab" type="button" data-tab="roster" aria-selected="' + (tab === 'roster') + '">Roster</button><button class="chip" role="tab" type="button" data-tab="tstats" aria-selected="' + (tab === 'tstats') + '">Team stats</button></div>';
-      html += '<div id="tbody">' + (tab === 'roster' ? rosterHTML() : teamStatsHTML()) + '</div>';
+        (site ? '<a class="outbtn" href="' + esc(site) + '" target="_blank" rel="noopener">Team site' + OUT + '</a>' : '') + '</div>';
+      html += '<div class="tabs" role="tablist" aria-label="Team views">' + [['roster', 'Roster'], ['schedule', 'Schedule'], ['tstats', 'Team stats']].map(function (x) {
+        return '<button class="chip" role="tab" type="button" data-tab="' + x[0] + '" aria-selected="' + (tab === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>';
+      html += '<div id="tbody">' + (tab === 'roster' ? rosterHTML() : tab === 'schedule' ? scheduleHTML() : teamStatsHTML()) + '</div>';
       el.innerHTML = html;
-      on('[data-tab]', function (b) { tab = b.getAttribute('data-tab'); paint(); });
+      on('[data-tab]', function (b) { tab = b.getAttribute('data-tab'); store.set('teamTab', tab); paint(); });
     }
-    function ordinalPlace(n) { n = +n; var s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+    function personKey(n) { return normName(n).replace(/\b(jr|sr|ii|iii|iv)\b/g, '').replace(/\s+/g, ' ').trim(); }
+    function lastFirstKey(n) { var w = personKey(n).split(' '); return w.length > 1 ? w[w.length - 1] + ' ' + w[0].charAt(0) : w[0]; }
     function rosterHTML() {
-      if (!stats) return '<p class="empty">Loading roster…</p>';
-      if (stats.error) return errBox('Couldn’t load the roster.');
-      var sc = {}; stats.skaterCols.forEach(function (c, i) { sc[c] = i; });
-      var gc = {}; stats.goalieCols.forEach(function (c, i) { gc[c] = i; });
-      var sk = stats.skaters.filter(function (r) { return canon(r[sc.team]) === key; }).sort(function (a, b) { return b[sc.pts] - a[sc.pts] || b[sc.g] - a[sc.g]; });
-      var gk = stats.goalies.filter(function (r) { return canon(r[gc.team]) === key; }).sort(function (a, b) { return b[gc.gp] - a[gc.gp]; });
-      if (!sk.length && !gk.length) return '<p class="empty">No players found for this team yet.</p>';
-      var C = 'grid-template-columns:minmax(0,1fr) 30px 30px 30px 34px';
+      if (!ros && !stats) return '<p class="empty">Loading roster…</p>';
+      var sc = {}, gc = {}, sk = [], gk = [];
+      if (stats && !stats.error) {
+        stats.skaterCols.forEach(function (c, i) { sc[c] = i; });
+        stats.goalieCols.forEach(function (c, i) { gc[c] = i; });
+        sk = stats.skaters.filter(function (r) { return canon(r[sc.team]) === key; });
+        gk = stats.goalies.filter(function (r) { return canon(r[gc.team]) === key; });
+      }
+      // index season stats by full name and by "last + first initial" (names are spelled slightly differently across sources)
+      function indexBy(list, ni) { var a = {}, b = {}; list.forEach(function (r) { a[personKey(r[ni])] = r; b[lastFirstKey(r[ni])] = r; }); return function (n) { return a[personKey(n)] || b[lastFirstKey(n)] || null; }; }
+      var skOf = indexBy(sk, sc.name), gkOf = indexBy(gk, gc.name);
+      var players = (ros && ros.players && ros.players.length) ? ros.players.slice() : sk.map(function (r) { return { num: '', name: r[sc.name], pos: r[sc.pos], group: /^D/i.test(r[sc.pos]) ? 'D' : 'F', yr: r[sc.yr], img: '' }; })
+        .concat(gk.map(function (r) { return { num: '', name: r[gc.name], pos: 'G', group: 'G', yr: r[gc.yr], img: '' }; }));
+      if (!players.length) return '<p class="empty">No roster found for this team yet.</p>';
+      function photo(p) {
+        return p.img ? '<img src="' + esc(p.img) + '" alt="" loading="lazy" referrerpolicy="no-referrer" style="width:40px;height:48px;object-fit:cover;object-position:top;border-radius:6px;background:var(--card);flex:none">'
+          : '<span style="width:40px;height:48px;border-radius:6px;background:var(--card);border:1px dashed var(--logo);display:inline-flex;align-items:center;justify-content:center;font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--sub);flex:none">' + esc(p.num || '') + '</span>';
+      }
+      var C = 'grid-template-columns:minmax(0,1fr) 28px 26px 26px 32px';
+      var G = 'grid-template-columns:minmax(0,1fr) 28px 46px 40px 28px';
+      function who(p) {
+        return '<span class="tm" style="gap:10px">' + photo(p) + '<span style="min-width:0"><span class="nm" style="display:block">' + (p.num ? '<span class="mono s" style="font-weight:600">#' + esc(p.num) + '</span> ' : '') + esc(p.name) + '</span>' +
+          '<span class="sub">' + esc([p.pos, p.yr, p.ht].filter(Boolean).join(' · ')) + '</span></span></span>';
+      }
       function grp(title, list) {
         if (!list.length) return '';
+        list.sort(function (a, b) { var x = skOf(a.name), y = skOf(b.name); return ((y ? y[sc.pts] : -1) - (x ? x[sc.pts] : -1)) || ((+a.num || 99) - (+b.num || 99)); });
         return '<section class="blk"><h3 class="cond">' + title + '</h3><div class="g h" style="' + C + '"><span>PLAYER</span><span class="r">GP</span><span class="r">G</span><span class="r">A</span><span class="r">PTS</span></div>' +
-          list.map(function (r) { return '<div class="g" style="' + C + '"><span><span class="b">' + esc(r[sc.name]) + '</span> <span class="s" style="font-size:11px">' + esc(r[sc.yr]) + '</span></span><span class="r s">' + r[sc.gp] + '</span><span class="r">' + r[sc.g] + '</span><span class="r">' + r[sc.a] + '</span><span class="r b">' + r[sc.pts] + '</span></div>'; }).join('') + '</section>';
+          list.map(function (p) { var r = skOf(p.name);
+            return '<div class="g" style="' + C + '">' + who(p) + (r ? '<span class="r s">' + r[sc.gp] + '</span><span class="r">' + r[sc.g] + '</span><span class="r">' + r[sc.a] + '</span><span class="r b">' + r[sc.pts] + '</span>' : '<span class="r s">–</span><span class="r s">–</span><span class="r s">–</span><span class="r s">–</span>') + '</div>'; }).join('') + '</section>';
       }
-      var fwd = sk.filter(function (r) { return !/^D/i.test(r[sc.pos]); }), def = sk.filter(function (r) { return /^D/i.test(r[sc.pos]); });
-      var C2 = 'grid-template-columns:minmax(0,1fr) 30px 46px 40px 30px';
-      var goalies = gk.length ? '<section class="blk"><h3 class="cond">Goalies</h3><div class="g h" style="' + C2 + '"><span>PLAYER</span><span class="r">GP</span><span class="r">SV%</span><span class="r">GAA</span><span class="r">SO</span></div>' +
-        gk.map(function (r) { return '<div class="g" style="' + C2 + '"><span><span class="b">' + esc(r[gc.name]) + '</span> <span class="s" style="font-size:11px">' + esc(r[gc.yr]) + '</span></span><span class="r s">' + r[gc.gp] + '</span><span class="r b">' + fmt3(r[gc.svpct]) + '</span><span class="r">' + (r[gc.gaa] == null ? '' : (+r[gc.gaa]).toFixed(2)) + '</span><span class="r">' + r[gc.so] + '</span></div>'; }).join('') + '</section>' : '';
-      return grp('Forwards', fwd) + grp('Defense', def) + goalies + '<p class="note" style="margin-top:14px">Everyone who has played this season. Jersey numbers aren’t in this source. Source: College Hockey Inc.</p>';
+      var goalies = players.filter(function (p) { return p.group === 'G'; });
+      var gHtml = goalies.length ? '<section class="blk"><h3 class="cond">Goalies</h3><div class="g h" style="' + G + '"><span>PLAYER</span><span class="r">GP</span><span class="r">SV%</span><span class="r">GAA</span><span class="r">SO</span></div>' +
+        goalies.map(function (p) { var r = gkOf(p.name);
+          return '<div class="g" style="' + G + '">' + who(p) + (r ? '<span class="r s">' + r[gc.gp] + '</span><span class="r b">' + fmt3(r[gc.svpct]) + '</span><span class="r">' + (r[gc.gaa] == null ? '' : (+r[gc.gaa]).toFixed(2)) + '</span><span class="r">' + r[gc.so] + '</span>' : '<span class="r s">–</span><span class="r s">–</span><span class="r s">–</span><span class="r s">–</span>') + '</div>'; }).join('') + '</section>' : '';
+      var src = ros && ros.source === 'school' ? 'Roster and photos: ' + (ros.site || '').replace(/^https?:\/\//, '') : ros && ros.source === 'ncaa-box' ? 'Roster from the latest NCAA box score (no photos for this school)' : 'Roster from season stats';
+      return grp('Forwards', players.filter(function (p) { return p.group === 'F' || !p.group; })) + grp('Defense', players.filter(function (p) { return p.group === 'D'; })) + gHtml +
+        '<p class="note" style="margin-top:14px">' + esc(src) + '. Stats: College Hockey Inc. PIM is in the season stats as minutes only; game box scores show penalties (minutes).</p>';
+    }
+    function scheduleHTML() {
+      if (!sched) return '<p class="empty">Loading schedule…</p>';
+      if (sched.error) return errBox('Couldn’t load the schedule.');
+      var games = (sched.games || []).filter(function (g) { return canon(g.away) === key || canon(g.home) === key; });
+      if (!games.length) return '<p class="empty">No games found.</p>';
+      var wl = { W: 0, L: 0, T: 0 };
+      var today = todayISO();
+      var C = 'grid-template-columns:76px 20px minmax(0,1fr) 64px';
+      var html = '<section class="blk">' + games.map(function (g) {
+        var home = canon(g.home) === key;
+        var opp = home ? g.away : g.home;
+        var oi = teamInfo(opp);
+        var us = home ? g.hs : g.as, them = home ? g.as : g.hs;
+        var played = us !== '' && them !== '' && us != null && them != null;
+        var res = '', col = 'var(--ink)';
+        if (played) {
+          var r = +us > +them ? 'W' : +us < +them ? 'L' : 'T';
+          wl[r]++;
+          res = r + ' ' + us + '-' + them + (g.note ? ' ' + g.note.toUpperCase() : '');
+          col = r === 'W' ? 'var(--acc)' : r === 'L' ? 'var(--live)' : 'var(--sub)';
+        } else res = g.date >= today ? (g.note || '') : '';
+        var d = parseISO(g.date);
+        var dl = d.toLocaleDateString([], { weekday: 'short' }).toUpperCase() + ' ' + (d.getMonth() + 1) + '/' + d.getDate();
+        var isD1 = !!TEAM_CONF[oi.key];
+        var row = '<span class="mono s" style="font-size:11px">' + dl + '</span><span class="mono s" style="font-size:11px">' + (g.neutral ? 'vs' : home ? 'vs' : '@') + '</span>' +
+          '<span class="tm">' + (isD1 ? logo(oi, 'sm') : '<span class="logo sm"></span>') + '<span class="nm" style="font-weight:' + (isD1 ? 600 : 500) + '">' + esc(opp) + '</span></span>' +
+          '<span class="r b" style="color:' + col + ';font-size:12px">' + esc(res) + '</span>';
+        return '<a class="g" style="' + C + '" href="#/?d=' + g.date + '">' + row + '</a>';
+      }).join('') + '</section>';
+      return '<p class="note" style="margin-top:12px">Record in these games: ' + wl.W + '-' + wl.L + '-' + wl.T + ' (includes exhibitions). Tap a game to open that day’s scores.</p>' + html +
+        '<p class="note" style="margin-top:12px">Source: College Hockey Inc. national schedule.</p>';
     }
     function teamStatsHTML() {
       if (!stats) return '<p class="empty">Loading…</p>';
@@ -916,7 +997,9 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
     }
     getData('rankings').then(function (r) { idx = rankIndex(r); paint(); }).catch(function () {});
     getData('standings').then(function (d) { st = d; paint(); }).catch(function () {});
-    getData('stats').then(function (d) { stats = d; paint(); }).catch(function (e) { stats = { error: e.message }; paint(); });
+    getData('stats').then(function (d) { stats = d; paint(); }).catch(function (e) { stats = { error: e.message, skaters: [], goalies: [] }; paint(); });
+    getRoster(key).then(function (d) { ros = d; paint(); }).catch(function () { ros = { players: [] }; paint(); });
+    getData('schedule').then(function (d) { sched = d; paint(); }).catch(function (e) { sched = { error: e.message }; paint(); });
     current = { repaint: paint };
     paint();
   }
@@ -987,22 +1070,22 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
       if (tab === 'box') {
         if (!state.box) { el.innerHTML = '<p class="empty">' + (state.g && state.g.kind === 'pre' ? 'Game hasn’t started.' : 'No player box score in the feed yet.') + '</p>'; return; }
         el.innerHTML = state.box.map(function (t) {
-          var sk = '<div class="scroll"><table class="box"><thead><tr><th scope="col">PLAYER</th><th scope="col">G</th><th scope="col">A</th><th scope="col">SOG</th><th scope="col">+/-</th><th scope="col">PIM</th><th scope="col">FO</th></tr></thead><tbody>' +
+          var sk = '<div class="scroll"><table class="box"><thead><tr><th scope="col">PLAYER</th><th scope="col">G</th><th scope="col">A</th><th scope="col">SOG</th><th scope="col">+/-</th><th scope="col">PEN</th><th scope="col">FO</th></tr></thead><tbody>' +
             t.skaters.map(function (r) {
               return '<tr><td>' + (r.num ? '<span class="mono" style="color:var(--sub)">' + esc(r.num) + '</span> ' : '') + esc(r.name) + (r.pos ? ' <span style="color:var(--sub);font-size:11px">' + esc(r.pos) + '</span>' : '') + '</td>' +
-                '<td>' + esc(r.g) + '</td><td>' + esc(r.a) + '</td><td>' + esc(r.sog) + '</td><td>' + esc(r.pm) + '</td><td>' + esc(r.pim) + '</td><td>' + esc(r.fo) + '</td></tr>';
+                '<td>' + esc(r.g) + '</td><td>' + esc(r.a) + '</td><td>' + esc(r.sog) + '</td><td>' + esc(r.pm) + '</td><td>' + esc(r.pen) + '</td><td>' + esc(r.fo) + '</td></tr>';
             }).join('') + '</tbody></table></div>';
           var gk = t.goalies.length ? '<div class="scroll" style="margin-top:8px"><table class="box"><thead><tr><th scope="col">GOALIE</th><th scope="col">MIN</th><th scope="col">SV</th><th scope="col">GA</th><th scope="col">SV%</th></tr></thead><tbody>' +
             t.goalies.map(function (r) { return '<tr><td>' + (r.num ? '<span class="mono" style="color:var(--sub)">' + esc(r.num) + '</span> ' : '') + esc(r.name) + '</td><td>' + esc(r.min) + '</td><td>' + esc(r.sv) + '</td><td>' + esc(r.ga) + '</td><td>' + esc(r.svpct) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
           return '<section class="blk"><h3 class="cond">' + esc(t.name) + '</h3>' + sk + gk + '</section>';
-        }).join('');
+        }).join('') + '<p class="note" style="margin-top:12px">PEN = penalties (penalty minutes).</p>';
         return;
       }
       if (tab === 'plays') {
         if (!state.plays) { el.innerHTML = '<p class="empty">' + (state.g && state.g.kind === 'pre' ? 'Game hasn’t started.' : 'No play-by-play in the feed yet.') + '</p>'; return; }
         el.innerHTML = state.plays.slice().reverse().map(function (p) {
           return '<div class="per">' + esc(p.title) + '</div>' + p.plays.slice().reverse().map(function (x) {
-            return '<div class="play' + (x.goal ? ' goalplay' : '') + '"><span class="t">' + esc(x.time) + '</span><span class="x">' + (x.team ? '<span class="mono" style="font-size:11px;color:var(--sub)">' + esc(x.team) + '</span> ' : '') + esc(x.text) + '</span>' + (x.goal && x.score ? '<span class="sc">' + esc(x.score) + '</span>' : '') + '</div>';
+            return '<div class="play' + (x.goal ? ' goalplay' : '') + '"' + (x.pen ? ' style="color:var(--live)"' : '') + '><span class="t">' + esc(x.time) + '</span><span class="x">' + (x.team ? '<span class="mono" style="font-size:11px;color:var(--sub)">' + esc(x.team) + '</span> ' : '') + esc(x.text) + '</span>' + (x.goal && x.score ? '<span class="sc">' + esc(x.score) + '</span>' : '') + '</div>';
           }).join('');
         }).join('') + '<p class="note" style="margin-top:10px">Newest first.</p>';
         return;
@@ -1018,6 +1101,17 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
         }).join('') + '</section>';
       } else {
         html += '<p class="empty">' + (state.g && state.g.kind === 'pre' ? 'Game hasn’t started.' : 'No scoring summary in the feed yet.') + '</p>';
+      }
+      var pens = (state.plays || []).map(function (p) { return { title: p.title, list: p.plays.filter(function (x) { return x.pen; }) }; }).filter(function (p) { return p.list.length; });
+      if (pens.length) {
+        html += '<section class="blk"><h3 class="cond">Penalties</h3>' + pens.map(function (p) {
+          return '<div class="per">' + esc(p.title) + '</div>' + p.list.map(function (x) {
+            var pn = x.pen;
+            return '<div class="goal"><span class="when">' + esc(x.time) + '</span>' + logo({ seo: x.seo, abbr: x.team }) +
+              '<div class="body"><span class="who" style="font-weight:500">' + esc(pn.who || pn.what) + '</span>' + (pn.who ? '<span class="ast">' + esc(pn.what) + '</span>' : '') + '</div>' +
+              '<span class="gs" style="font-size:13px">' + (pn.min != null ? pn.min + ' min' : '') + '</span></div>';
+          }).join('');
+        }).join('') + '</section>';
       }
       if (state.ts && state.ts.rows.length) {
         html += '<section class="blk"><h3 class="cond">Team stats</h3>' + state.ts.rows.map(function (r) {
@@ -1062,7 +1156,12 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
           var bx = r[1].value.data, tm = (bx && bx.teams) || [];
           var hh = tm.filter(function (t) { return t.isHome; })[0], aa = tm.filter(function (t) { return !t.isHome; })[0];
           var tsb = (bx && bx.teamBoxscore) || [];
-          function sc(t) { var x = tsb.filter(function (b) { return String(b.teamId) === String(t.teamId); })[0]; return x && x.teamStats ? x.teamStats.goals : ''; }
+          function sc(t) {
+            var x = tsb.filter(function (b) { return String(b.teamId) === String(t.teamId); })[0];
+            if (x && x.teamStats && x.teamStats.goals != null && x.teamStats.goals !== '') return x.teamStats.goals;
+            if (x && Array.isArray(x.playerStats) && x.playerStats.length) return x.playerStats.reduce(function (n, p) { return n + (+p.goals || 0); }, 0);
+            return '';
+          }
           if (hh && aa) {
             var mk = function (t) { var k = canon(t.nameShort); return { key: k, seo: t.seoname, name: t.nameShort, abbr: t.name6Char, score: String(sc(t)), feedRank: '', winner: false }; };
             state.g = { id: id, kind: String(bx.status).toUpperCase() === 'F' ? 'final' : 'live', away: mk(aa), home: mk(hh), s1: String(bx.period || ''), s2: '', conf: '', epoch: 0 };
@@ -1110,7 +1209,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
     ] };
     if (/team-stats$/.test(path)) return { teams: teams, teamBoxscore: [{ teamId: 1, teamStats: tsA }, { teamId: 2, teamStats: tsH }] };
     if (/play-by-play$/.test(path)) return { teams: teams, periods: [
-      { periodNumber: 1, periodDisplay: '1st', playbyplayStats: [{ teamId: '2', clock: '06:12', eventDescription: 'GOAL by Lucas Marchetti, power play', visitScore: '0', homeScore: '1' }, { teamId: '1', clock: '11:40', eventDescription: 'Penalty: Dan Kowalski, tripping (2 min)' }] },
+      { periodNumber: 1, periodDisplay: '1st', playbyplayStats: [{ teamId: '1', clock: '05:01', plays: [{ playText: 'Penalty on Sato, Mika CC 2 minutes for hooking.' }] }, { teamId: '2', clock: '06:12', plays: [{ playText: 'GOAL by DEN Marchetti, Lucas (5), Assist by Okafor, Lindqvist', visitorScore: '0', homeScore: '1' }] }, { teamId: '2', clock: '11:40', plays: [{ playText: 'Penalty on Kowalski, Dan DEN 2 minutes for tripping.' }] }] },
       { periodNumber: 2, periodDisplay: '2nd', playbyplayStats: [{ teamId: '2', clock: '03:27', eventDescription: 'GOAL by Theo Lindqvist', visitScore: '1', homeScore: '3' }, { teamId: '1', clock: '07:19', eventDescription: 'Shot by Jake Brandt, saved by Matt Duval' }] }
     ] };
     if (path === '/data/rankings') return {
@@ -1131,6 +1230,12 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
       goalies: [['Daniel Hauser', 'Wisconsin', 'Jr', 4, 4, 0, 0, 2, '240:00', 0.5, 2, 70, 0.973], ['Matt Duval', 'Denver', 'So', 8, 6, 1, 1, 15, '480:00', 1.88, 1, 190, 0.927]],
       teams: [['Denver', 10, 34, 20, 330, 10.3, 280, 0.929, 8, 33, 24.2, 4, 30, 86.7, 1, 0, 300, 280, 51.7, 120], ['Wisconsin', 8, 36, 6, 300, 12.0, 200, 0.97, 9, 30, 30.0, 1, 28, 96.4, 2, 0, 260, 230, 53.1, 90]] };
     if (path === '/data/meta') return { schools: [] };
+    if (path === '/data/roster') return { site: 'https://denverpioneers.com', source: 'school', players: [
+      { num: '19', name: 'Lucas Marchetti', pos: 'F', group: 'F', yr: 'Jr.', ht: "5'11\"", img: '' }, { num: '4', name: 'Ryan Okafor', pos: 'D', group: 'D', yr: 'Jr.', img: '' },
+      { num: '27', name: 'Dan Kowalski', pos: 'D', group: 'D', yr: 'Sr.', img: '' }, { num: '30', name: 'Matt Duval', pos: 'G', group: 'G', yr: 'So.', img: '' }, { num: '8', name: 'Eli Price', pos: 'F', group: 'F', yr: 'Fr.', img: '' }] };
+    if (path === '/data/schedule') return { games: [
+      { date: '2026-10-30', away: 'Omaha', as: '2', home: 'Denver', hs: '1', note: '' }, { date: '2026-11-06', away: 'Colorado College', as: '2', home: 'Denver', hs: '4', note: '' },
+      { date: '2026-11-07', away: 'Colorado College', as: '1', home: 'Denver', hs: '3', note: '' }, { date: '2026-11-13', away: 'Denver', as: '', home: 'North Dakota', hs: '', note: '' }, { date: '2026-11-14', away: 'Denver', as: '', home: 'North Dakota', hs: '', note: '' }] };
     return {};
   }
 

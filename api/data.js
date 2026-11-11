@@ -172,6 +172,32 @@ export async function GET(request) {
   }
 }
 
+// ---- team-name key (identical to the app's canon()) ----
+  function normName(s) { return String(s || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim(); }
+  var ALIAS = {
+    'boston u': 'boston university', 'boston univ': 'boston university', 'bu': 'boston university', 'bc': 'boston college', 'boston col': 'boston college',
+    'uconn': 'connecticut', 'umass': 'massachusetts', 'umass amherst': 'massachusetts', 'umass lowell': 'massachusetts lowell', 'mass lowell': 'massachusetts lowell', 'uml': 'massachusetts lowell',
+    'rpi': 'rensselaer', 'rensselaer polytechnic institute': 'rensselaer', 'rit': 'rochester institute of technology', 'rochester inst': 'rochester institute of technology',
+    'unh': 'new hampshire', 'miami oh': 'miami', 'miami ohio': 'miami', 'st thomas mn': 'st thomas', 'st thomas minn': 'st thomas', 'st thomas minnesota': 'st thomas', 'saint thomas': 'st thomas',
+    'alaska fairbanks': 'alaska', 'army west point': 'army', 'u s military academy': 'army', 'us military academy': 'army', 'united states military academy': 'army',
+    'u s air force academy': 'air force', 'us air force academy': 'air force', 'united states air force academy': 'air force', 'air force academy': 'air force',
+    'liu': 'long island', 'long island university': 'long island', 'nebraska omaha': 'omaha', 'minnesota state mankato': 'minnesota state', 'minnesota st mankato': 'minnesota state', 'minn st mankato': 'minnesota state',
+    'augustana sd': 'augustana', 'umd': 'minnesota duluth', 'colorado col': 'colorado college', 'cc': 'colorado college', 'lake superior': 'lake superior state', 'saint lawrence': 'st lawrence',
+    'saint cloud state': 'st cloud state', 'union ny': 'union', 'michigan technological': 'michigan tech', 'pennsylvania state': 'penn state', 'bowling green state': 'bowling green',
+    'holy cross college': 'holy cross', 'osu': 'ohio state', 'msu': 'michigan state', 'und': 'north dakota', 'wmu': 'western michigan', 'scsu': 'st cloud state', 'asu': 'arizona state'
+  };
+  var KEEP_COLLEGE = { 'boston college': 1, 'colorado college': 1 };
+  function canon(s) {
+    var n = normName(s).replace(/^the /, '');
+    if (ALIAS[n]) return ALIAS[n];
+    n = n.replace(/^university of /, '').replace(/ university of /, ' ');
+    if (n !== 'boston university') n = n.replace(/ university( |$)/, '$1').trim();
+    n = n.replace(/^college of (the )?/, '');
+    if (!KEEP_COLLEGE[n]) n = n.replace(/ college$/, '');
+    n = n.replace(/ st$/, ' state').replace(/ mich$/, ' michigan').replace(/^minn /, 'minnesota ').replace(/^mich /, 'michigan ');
+    return ALIAS[n] || n;
+  }
+
 // ---- official sites + school roster pages (jersey numbers, photos) ----
 export const SITES = {
   'arizona state': 'thesundevils.com', 'colorado college': 'cctigers.com', 'denver': 'denverpioneers.com', 'miami': 'miamiredhawks.com',
@@ -186,7 +212,7 @@ export const SITES = {
   'dartmouth': 'dartmouthsports.com', 'harvard': 'gocrimson.com', 'princeton': 'goprincetontigers.com', 'quinnipiac': 'gobobcats.com',
   'rensselaer': 'rpiathletics.com', 'st lawrence': 'saintsathletics.com', 'union': 'unionathletics.com', 'yale': 'yalebulldogs.com',
   'augustana': 'goaugie.com', 'bemidji state': 'bsubeavers.com', 'bowling green': 'bgsufalcons.com', 'ferris state': 'ferrisstatebulldogs.com',
-  'lake superior state': 'lssuathletics.com', 'michigan tech': 'michigantechhuskies.com', 'minnesota state': 'msumavericks.com', 'northern michigan': 'nmuwildcats.com',
+  'lake superior state': 'lssulakers.com', 'michigan tech': 'michigantechhuskies.com', 'minnesota state': 'msumavericks.com', 'northern michigan': 'nmuwildcats.com',
   'air force': 'goairforcefalcons.com', 'army': 'goarmywestpoint.com', 'bentley': 'bentleyfalcons.com', 'canisius': 'gogriffs.com',
   'holy cross': 'goholycross.com', 'niagara': 'purpleeagles.com', 'rochester institute of technology': 'ritathletics.com',
   'robert morris': 'rmucolonials.com', 'sacred heart': 'sacredheartpioneers.com',
@@ -250,9 +276,47 @@ export async function roster(key) {
   const base = new URL(url).origin;
   let players = parseClassic(html, base);
   if (players.length < 5) players = parseCards(html, base);
+  return finishRoster(key, 'https://' + domain, url, players);
+}
+function posGroup(p) {
+  const s = String(p || '').toLowerCase();
+  if (/^g|goal/.test(s)) return 'G';
+  if (/^(d|ld|rd)$|defen/.test(s)) return 'D';
+  if (s) return 'F';
+  return '';
+}
+async function finishRoster(key, site, url, players) {
   const seen = {};
-  players = players.filter(p => { const k = p.name.toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; });
-  return { site: 'https://' + domain, rosterUrl: url, players };
+  players = players.map(p => Object.assign(p, { name: p.name.replace(/\s+/g, ' ').trim(), group: posGroup(p.pos) }))
+    .filter(p => p.num || p.group)                      // drops coaches and staff cards
+    .filter(p => { const k = p.name.toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; });
+  if (players.length >= 10) return { site, rosterUrl: url, source: 'school', players };
+  // fallback: numbers and positions from this team's most recent NCAA box score
+  try {
+    const fb = await rosterFromBox(key);
+    if (fb.length) return { site, rosterUrl: url, source: 'ncaa-box', players: fb };
+  } catch (e) { /* fall through */ }
+  return { site, rosterUrl: url, source: 'none', players };
+}
+const tc = s => String(s || '').toLowerCase().replace(/(^|[\s\-'.])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+async function rosterFromBox(key) {
+  const sch = await schedule();
+  const played = sch.games.filter(g => (g.as !== '' || g.hs !== '') && (canon(g.away) === key || canon(g.home) === key)).sort((a, b) => b.date < a.date ? -1 : 1);
+  for (const g of played.slice(0, 3)) {
+    const [y, m, d] = g.date.split('-');
+    const sb = await json(`${NCAA}/scoreboard/icehockey-men/d1/${y}/${m}/${d}/all-conf`).catch(() => null);
+    const hit = ((sb && sb.games) || []).map(x => x.game || x).find(x => [x.away, x.home].some(t => t && t.names && canon(t.names.short) === key));
+    if (!hit) continue;
+    await sleep(300);
+    const bx = await json(`${NCAA}/game/${hit.gameID}/boxscore`).catch(() => null);
+    if (!bx) continue;
+    const team = (bx.teams || []).find(t => canon(t.nameShort) === key || canon(t.nameFull) === key);
+    const tb = team && (bx.teamBoxscore || []).find(t => String(t.teamId) === String(team.teamId));
+    if (!tb) continue;
+    return (tb.playerStats || []).map(p => ({ num: p.number != null ? String(p.number) : '', name: tc((p.firstName || '') + ' ' + (p.lastName || '')).trim(), pos: p.position || '', group: posGroup(p.position), yr: '', ht: '', town: '', img: '' }))
+      .filter(p => p.name).sort((a, b) => (+a.num || 99) - (+b.num || 99));
+  }
+  return [];
 }
 
 // ---- national schedule (College Hockey Inc. composite) ---------------
