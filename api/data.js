@@ -145,10 +145,19 @@ const TYPES = {
   standings: { ttl: 600, run: standings },
   stats: { ttl: 900, run: stats },
   meta: { ttl: 86400, run: meta },
+  schedule: { ttl: 900, run: schedule },
 };
 
 export async function GET(request) {
-  const type = new URL(request.url).searchParams.get('type');
+  const params = new URL(request.url).searchParams;
+  const type = params.get('type');
+  if (type === 'roster') {
+    try {
+      const body = await roster(params.get('team') || '');
+      body.fetchedAt = new Date().toISOString();
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=0, s-maxage=43200, stale-while-revalidate=86400', 'x-fetched-at': body.fetchedAt } });
+    } catch (e) { return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 404, headers: { 'content-type': 'application/json' } }); }
+  }
   const t = TYPES[type];
   if (!t) return new Response(JSON.stringify({ error: 'unknown type' }), { status: 404, headers: { 'content-type': 'application/json' } });
   try {
@@ -161,4 +170,100 @@ export async function GET(request) {
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 502, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
+}
+
+// ---- official sites + school roster pages (jersey numbers, photos) ----
+export const SITES = {
+  'arizona state': 'thesundevils.com', 'colorado college': 'cctigers.com', 'denver': 'denverpioneers.com', 'miami': 'miamiredhawks.com',
+  'minnesota duluth': 'umdbulldogs.com', 'north dakota': 'fightinghawks.com', 'omaha': 'omavs.com', 'st cloud state': 'scsuhuskies.com',
+  'st thomas': 'tommiesports.com', 'western michigan': 'wmubroncos.com',
+  'michigan': 'mgoblue.com', 'michigan state': 'msuspartans.com', 'minnesota': 'gophersports.com', 'notre dame': 'fightingirish.com',
+  'ohio state': 'ohiostatebuckeyes.com', 'penn state': 'gopsusports.com', 'wisconsin': 'uwbadgers.com',
+  'boston college': 'bceagles.com', 'boston university': 'goterriers.com', 'connecticut': 'uconnhuskies.com', 'maine': 'goblackbears.com',
+  'massachusetts': 'umassathletics.com', 'massachusetts lowell': 'goriverhawks.com', 'merrimack': 'merrimackathletics.com',
+  'new hampshire': 'unhwildcats.com', 'northeastern': 'nuhuskies.com', 'providence': 'friars.com', 'vermont': 'uvmathletics.com',
+  'brown': 'brownbears.com', 'clarkson': 'clarksonathletics.com', 'colgate': 'colgateathletics.com', 'cornell': 'cornellbigred.com',
+  'dartmouth': 'dartmouthsports.com', 'harvard': 'gocrimson.com', 'princeton': 'goprincetontigers.com', 'quinnipiac': 'gobobcats.com',
+  'rensselaer': 'rpiathletics.com', 'st lawrence': 'saintsathletics.com', 'union': 'unionathletics.com', 'yale': 'yalebulldogs.com',
+  'augustana': 'goaugie.com', 'bemidji state': 'bsubeavers.com', 'bowling green': 'bgsufalcons.com', 'ferris state': 'ferrisstatebulldogs.com',
+  'lake superior state': 'lssuathletics.com', 'michigan tech': 'michigantechhuskies.com', 'minnesota state': 'msumavericks.com', 'northern michigan': 'nmuwildcats.com',
+  'air force': 'goairforcefalcons.com', 'army': 'goarmywestpoint.com', 'bentley': 'bentleyfalcons.com', 'canisius': 'gogriffs.com',
+  'holy cross': 'goholycross.com', 'niagara': 'purpleeagles.com', 'rochester institute of technology': 'ritathletics.com',
+  'robert morris': 'rmucolonials.com', 'sacred heart': 'sacredheartpioneers.com',
+  'alaska': 'alaskananooks.com', 'alaska anchorage': 'goseawolves.com', 'lindenwood': 'lindenwoodlions.com', 'long island': 'liuathletics.com', 'stonehill': 'stonehillskyhawks.com',
+};
+const ROSTER_PATHS = ['/sports/mens-ice-hockey/roster', '/sports/ice-hockey/roster', '/sports/mens-hockey/roster', '/sports/hockey/roster', '/sports/m-hockey/roster', '/sports/mice/roster'];
+const MOBILE_UA = { 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' };
+const strip = s => decode(String(s || '').replace(/<[^>]+>/g, ' '));
+const POS_RE = /^(F|D|G|C|LW|RW|W|LD|RD|Forward|Defense(?:man)?|Goalie|Goaltender|Center|Wing|Left Wing|Right Wing)$/i;
+function absUrl(u, base) { if (!u) return ''; u = u.replace(/&amp;/g, '&'); if (/^https?:/i.test(u)) return u; if (u.startsWith('//')) return 'https:' + u; return base.replace(/\/$/, '') + (u.startsWith('/') ? '' : '/') + u; }
+function pickImg(block, base) {
+  const m = block.match(/<img[^>]+(?:data-src|src)="([^"]+\.(?:jpe?g|png|webp)[^"]*)"/i) || block.match(/<img[^>]+(?:data-src|src)="(https:\/\/images\.sidearmdev\.com[^"]+)"/i);
+  return m ? absUrl(m[1], base) : '';
+}
+function parseClassic(html, base) {
+  const parts = html.split(/<li[^>]+class="[^"]*sidearm-roster-player(?=[\s"])[^"]*"/i).slice(1);
+  return parts.map(b => {
+    const num = strip((b.match(/sidearm-roster-player-jersey-number[^>]*>([\s\S]*?)<\//) || [])[1]);
+    const name = strip((b.match(/sidearm-roster-player-name[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/) || [])[1]);
+    const posRaw = strip((b.match(/sidearm-roster-player-position[^>]*>([\s\S]*?)<\/(?:div|span)>/) || [])[1]);
+    const yr = strip((b.match(/sidearm-roster-player-academic-year[^>]*>([\s\S]*?)<\//) || [])[1]);
+    const ht = strip((b.match(/sidearm-roster-player-height[^>]*>([\s\S]*?)<\//) || [])[1]);
+    const town = strip((b.match(/sidearm-roster-player-hometown[^>]*>([\s\S]*?)<\//) || [])[1]);
+    return { num: (num.match(/\d{1,2}/) || [''])[0], name, pos: (posRaw.match(/\b(LW|RW|LD|RD|F|D|G|C|W|Forward|Defense(?:man)?|Goalie|Goaltender)\b/i) || [''])[0], yr, ht, town, img: pickImg(b, base) };
+  }).filter(p => p.name);
+}
+function parseCards(html, base) {
+  const parts = html.split(/<(?:div|li|article)[^>]+class="[^"]*\bs-person-card(?=[\s"])[^"]*"/i).slice(1);
+  return parts.map(b => {
+    b = b.slice(0, 6000);
+    const texts = (b.match(/>([^<>]{1,80})</g) || []).map(t => decode(t.slice(1, -1))).filter(Boolean);
+    const si = b.indexOf('s-stamp__text');
+    const stampTxt = si >= 0 ? strip(b.slice(si, si + 160).replace(/^[^>]*>/, '')) : '';
+    const num = (stampTxt.match(/^\D{0,3}(\d{1,2})\b/) || b.match(/Jersey Number[^0-9]{0,40}(\d{1,2})/i) || [])[1] || '';
+    const nameM = b.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i) || b.match(/<a[^>]+href="[^"]*\/roster\/[^"]+"[^>]*>([\s\S]*?)<\/a>/i);
+    const name = strip(nameM && nameM[1]);
+    const pos = texts.find(t => POS_RE.test(t)) || '';
+    const yr = texts.find(t => /^(Fr|So|Jr|Sr|Gr|R-?Fr|R-?So|R-?Jr|R-?Sr|Freshman|Sophomore|Junior|Senior|Graduate|5th)\.?/i.test(t)) || '';
+    const ht = texts.find(t => /^\d['’]\s?\d{1,2}["”]?$/.test(t)) || '';
+    return { num, name, pos, yr, ht, town: '', img: pickImg(b, base) };
+  }).filter(p => p.name);
+}
+export async function roster(key) {
+  const domain = SITES[key];
+  if (!domain) throw new Error('unknown team');
+  let html = '', url = '';
+  for (const p of ROSTER_PATHS) {
+    try {
+      const r = await fetch('https://' + domain + p, { headers: MOBILE_UA, redirect: 'follow', signal: AbortSignal.timeout(7000) });
+      if (!r.ok) continue;
+      const h = await r.text();
+      if (h.length > 5000 && /roster/i.test(h)) { html = h; url = r.url || ('https://' + domain + p); break; }
+    } catch (e) { /* next path */ }
+  }
+  if (!html) return { site: 'https://' + domain, rosterUrl: '', players: [], error: 'roster page not found' };
+  const base = new URL(url).origin;
+  let players = parseClassic(html, base);
+  if (players.length < 5) players = parseCards(html, base);
+  const seen = {};
+  players = players.filter(p => { const k = p.name.toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; });
+  return { site: 'https://' + domain, rosterUrl: url, players };
+}
+
+// ---- national schedule (College Hockey Inc. composite) ---------------
+export async function schedule() {
+  const s = seasonCode();
+  const html = await text(`${CHI}/men/compnatfull${s}.php`);
+  const rows = tables(html)[0] || [];
+  const games = []; let date = '', exhib = false;
+  rows.forEach(r => {
+    const c = r.map(x => x.t);
+    const joined = c.join(' ').trim();
+    const dm = joined.match(/^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+([A-Z][a-z]+ \d{1,2}, \d{4})/);
+    if (dm) { const d = new Date(dm[1] + ' 12:00 UTC'); date = isNaN(d) ? '' : d.toISOString().slice(0, 10); exhib = /exhibition/i.test(joined); return; }
+    const at = c.findIndex(x => /^(at|vs\.?)$/i.test(x));
+    if (at < 1 || !date) return;
+    games.push({ date, away: c[at - 2] !== undefined && at >= 2 ? c[at - 2] : c[0], as: at >= 2 ? c[at - 1] : '', home: c[at + 1] || '', hs: c[at + 2] || '', note: c[at + 3] || '', neutral: /^vs/i.test(c[at]), exhibition: exhib });
+  });
+  return { source: 'College Hockey Inc.', season: '20' + (+s - 1) + '-' + s, games };
 }

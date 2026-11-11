@@ -1,7 +1,7 @@
 {
   "rewrites": [
     { "source": "/api/data", "destination": "/api/data" },
-    { "source": "/api/probe4", "destination": "/api/probe4" },
+    { "source": "/api/probe5", "destination": "/api/probe5" },
     { "source": "/api/:path*", "destination": "/api/proxy?path=:path*" }
   ]
 }
