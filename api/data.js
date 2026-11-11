@@ -153,9 +153,9 @@ export async function GET(request) {
   const type = params.get('type');
   if (type === 'conflogo') {
     try {
-      const url = await confLogo(params.get('c') || '');
-      return new Response(null, { status: 302, headers: { location: url, 'cache-control': 'public, max-age=86400, s-maxage=604800' } });
-    } catch (e) { return new Response(null, { status: 404, headers: { 'cache-control': 'public, s-maxage=3600' } }); }
+      const img = await confLogo(params.get('c') || '');
+      return new Response(img.body, { headers: { 'content-type': img.type, 'cache-control': 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=604800' } });
+    } catch (e) { return new Response(null, { status: 404, headers: { 'cache-control': 'public, s-maxage=600' } }); }
   }
   if (type === 'roster') {
     try {
@@ -180,30 +180,42 @@ export async function GET(request) {
 
 
 // ---- conference logos ---------------------------------------------------
-// Known logo files first; for the rest, look on the conference site for its icon or header logo.
+// Served through this function (not a redirect) so sites that block hotlinking still work.
+// Tries known files first, then looks on the conference site for its logo.
 const CONF_LOGO = {
-  'NCHC': { url: 'https://dbukjj6eu5tsf.cloudfront.net/nchchockey.com/images/responsive_2022/logo_main.svg' },
-  'Big Ten': { url: 'https://bigten.org/assets/img/logos/conference/logo-1000x1000-round.png' },
-  'Hockey East': { url: 'https://hockeyeastonline.com/images/design23/healogo-300.png' },
-  'ECAC Hockey': { site: 'https://ecachockey.com' },
-  'CCHA': { site: 'https://ccha.com' },
-  'Atlantic Hockey America': { site: 'https://atlantichockeyonline.com' },
+  'NCHC': { urls: ['https://dbukjj6eu5tsf.cloudfront.net/nchchockey.com/images/responsive_2022/logo_main.svg'], site: 'https://nchchockey.com' },
+  'Big Ten': { urls: ['https://bigten.org/assets/img/logos/conference/logo-1000x1000-round.png', 'https://bigten.org/assets/img/logos/conference/logo.svg'], site: 'https://bigten.org' },
+  'Hockey East': { urls: ['https://hockeyeastonline.com/images/design23/healogo-300.png'], site: 'https://hockeyeastonline.com' },
+  'ECAC Hockey': { urls: ['https://ecachockey.com/images/logos/site/site.png', 'https://ecachockey.com/images/logos/site/site.svg'], site: 'https://ecachockey.com' },
+  'CCHA': { urls: ['https://ccha.com/images/logos/site/site.png'], site: 'https://ccha.com' },
+  'Atlantic Hockey America': { urls: ['https://atlantichockeyamerica.com/images/logos/site/site.png', 'https://atlantichockeyamerica.com/images/logos/site/site.svg'], site: 'https://atlantichockeyamerica.com' },
 };
+async function findLogos(site) {
+  const html = await text(site);
+  const abs = u => new URL(u.replace(/&amp;/g, '&'), site).href;
+  const res = [
+    /<img[^>]+src="([^"]*\/logos?\/site\/[^"]+)"/i,
+    /<img[^>]+src="([^"]*logo[^"]*\.(?:svg|png))"/i,
+    /<link[^>]+rel="apple-touch-icon[^"]*"[^>]+href="([^"]+)"/i,
+    /<link[^>]+href="([^"]+)"[^>]+rel="apple-touch-icon[^"]*"/i,
+  ];
+  const out = [];
+  for (const re of res) { const m = html.match(re); if (m) out.push(abs(m[1])); }
+  return out;
+}
 async function confLogo(name) {
   const c = CONF_LOGO[name];
   if (!c) throw new Error('unknown conference');
-  if (c.url) return c.url;
-  const html = await text(c.site);
-  const abs = u => new URL(u.replace(/&amp;/g, '&'), c.site).href;
-  const pick = [
-    /<link[^>]+rel="apple-touch-icon[^"]*"[^>]+href="([^"]+)"/i,
-    /<link[^>]+href="([^"]+)"[^>]+rel="apple-touch-icon[^"]*"/i,
-    /<img[^>]+src="([^"]*\/logos?\/site\/[^"]+)"/i,
-    /<img[^>]+src="([^"]*logo_main[^"]*)"/i,
-    /<img[^>]+class="[^"]*logo[^"]*"[^>]+src="([^"]+)"/i,
-    /<link[^>]+rel="icon"[^>]+href="([^"]+\.(?:png|svg))"/i,
-  ];
-  for (const re of pick) { const m = html.match(re); if (m) return abs(m[1]); }
+  const tryUrl = async u => {
+    const r = await fetch(u, { headers: UA, signal: AbortSignal.timeout(8000) });
+    const type = r.headers.get('content-type') || '';
+    if (!r.ok || !/^image\//.test(type)) return null;
+    return { type, body: await r.arrayBuffer() };
+  };
+  for (const u of c.urls) { try { const x = await tryUrl(u); if (x) return x; } catch (e) {} }
+  let found = [];
+  try { found = await findLogos(c.site); } catch (e) {}
+  for (const u of found) { try { const x = await tryUrl(u); if (x) return x; } catch (e) {} }
   throw new Error('no logo found');
 }
 

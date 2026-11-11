@@ -181,8 +181,9 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
 
   var LOGO_CONFS = ['NCHC', 'Big Ten', 'Hockey East', 'ECAC Hockey', 'CCHA', 'Atlantic Hockey America'];
   function confLogo(name) {
-    if (DEMO || LOGO_CONFS.indexOf(name) < 0) return '<span class="clogo none" aria-hidden="true"></span>';
-    return '<img class="clogo" alt="" loading="lazy" src="/api/data?type=conflogo&c=' + encodeURIComponent(name) + '" onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),{className:\'clogo none\'}))">';
+    if (LOGO_CONFS.indexOf(name) < 0) return '';
+    if (DEMO) return '<span class="clogo none" aria-hidden="true"></span>';
+    return '<img class="clogo" alt="" loading="lazy" src="/api/data?type=conflogo&c=' + encodeURIComponent(name) + '" onerror="this.remove()">';
   }
   var view = document.getElementById('view');
   var store = {
@@ -649,7 +650,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
       var ord = { live: 0, pre: 1, final: 2 };
       box.innerHTML = groups.map(function (name) {
         var list = byName[name].slice().sort(function (p, q) { return ord[p.kind] - ord[q.kind] || p.epoch - q.epoch; });
-        return '<h2 class="grp cond">' + confLogo(name) + esc(name) + '</h2>' + list.map(gameRow).join('');
+        return '<h2 class="grp cond"' + (LOGO_CONFS.indexOf(name) < 0 ? ' style="color:var(--sub)"' : '') + '>' + confLogo(name) + esc(name) + '</h2>' + list.map(gameRow).join('');
       }).join('');
     }
     function gameRow(g) {
