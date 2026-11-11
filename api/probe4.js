@@ -24,13 +24,12 @@ const SITES = {
 const PATHS = ['/sports/mens-ice-hockey/roster', '/sports/ice-hockey/roster', '/sports/mens-hockey/roster', '/sports/hockey/roster', '/sports/m-hockey/roster', '/sports/mice/roster', '/hockey/roster/'];
 const UA = { 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' };
 
-async function tryRoster(domain) {
-  for (const p of PATHS) {
+async function tryPath(domain, p) {
     try {
-      const r = await fetch('https://' + domain + p, { headers: UA, redirect: 'follow', signal: AbortSignal.timeout(7000) });
-      if (!r.ok) continue;
+      const r = await fetch('https://' + domain + p, { headers: UA, redirect: 'follow', signal: AbortSignal.timeout(6000) });
+      if (!r.ok) return null;
       const h = await r.text();
-      if (!/roster/i.test(h) || h.length < 5000) continue;
+      if (!/roster/i.test(h) || h.length < 5000) return null;
       const count = re => (h.match(re) || []).length;
       const markers = {
         sidearmPlayer: count(/sidearm-roster-player-name/g), personCard: count(/s-person-card/g), nuxt: count(/__NUXT__|window\.__NUXT/g),
@@ -40,19 +39,18 @@ async function tryRoster(domain) {
       const name = ((h.match(/sidearm-roster-player-name[\s\S]{0,300}?<a[^>]*>([^<]{3,40})</) || h.match(/"(?:firstName|first_name)"\s*:\s*"([^"]+)"/) || [])[1] || '').trim();
       const img = (h.match(/<img[^>]+(?:data-src|src)="([^"]*(?:images|roster|headshot)[^"]*\.(?:jpe?g|png|webp)[^"]*)"/i) || [])[1] || '';
       return { ok: true, url: r.url, path: p, bytes: h.length, markers, sample: { num, name, img: img.slice(0, 140) } };
-    } catch (e) { /* try next path */ }
-  }
-  return { ok: false };
+    } catch (e) { return null; }
+}
+async function tryRoster(domain) {
+  const all = await Promise.all(PATHS.map(p => tryPath(domain, p)));
+  return all.find(Boolean) || { ok: false };
 }
 
 export async function GET() {
   const keys = Object.keys(SITES);
   const results = {};
-  for (let i = 0; i < keys.length; i += 10) {
-    const batch = keys.slice(i, i + 10);
-    const res = await Promise.all(batch.map(k => tryRoster(SITES[k])));
-    batch.forEach((k, j) => { results[k] = res[j]; });
-  }
+  const res = await Promise.all(keys.map(k => tryRoster(SITES[k])));
+  keys.forEach((k, j) => { results[k] = res[j]; });
   const lines = keys.map(k => {
     const r = results[k];
     if (!r.ok) return `${k} | ${SITES[k]} | FAIL`;
@@ -63,14 +61,14 @@ export async function GET() {
   // box score player order (does it follow line order?)
   let order = 'n/a';
   try {
-    const bx = await fetch('https://ncaa-api.henrygd.me/game/6643179/boxscore', { signal: AbortSignal.timeout(8000) }).then(r => r.json());
+    const bx = await fetch('https://ncaa-api.henrygd.me/game/6643179/boxscore', { signal: AbortSignal.timeout(6000) }).then(r => r.json());
     order = (bx.teamBoxscore || []).map(t => 'TEAM ' + t.teamId + ': ' + (t.playerStats || []).map(p => `${p.number}-${p.position}${p.starter ? '*' : ''}`).join(', ')).join('\n');
   } catch (e) { order = 'error ' + e.message; }
 
   // national schedule page layout
   let sched = 'n/a';
   try {
-    const h = await fetch('https://collegehockeyinc.com/men/compnatfull27.php', { headers: UA, signal: AbortSignal.timeout(8000) }).then(r => r.text());
+    const h = await fetch('https://collegehockeyinc.com/men/compnatfull27.php', { headers: UA, signal: AbortSignal.timeout(6000) }).then(r => r.text());
     const rows = (h.match(/<tr[\s\S]*?<\/tr>/gi) || []).slice(0, 14).map(r => (r.match(/<t[hd][\s\S]*?<\/t[hd]>/gi) || []).map(c => c.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()).join(' | '));
     sched = 'tables=' + (h.match(/<table/gi) || []).length + ' rows=' + (h.match(/<tr/gi) || []).length + '\n' + rows.join('\n');
   } catch (e) { sched = 'error ' + e.message; }
