@@ -192,6 +192,8 @@ export const SITES = {
   'robert morris': 'rmucolonials.com', 'sacred heart': 'sacredheartpioneers.com',
   'alaska': 'alaskananooks.com', 'alaska anchorage': 'goseawolves.com', 'lindenwood': 'lindenwoodlions.com', 'long island': 'liuathletics.com', 'stonehill': 'stonehillskyhawks.com',
 };
+// roster path confirmed per school; anything not listed uses the standard one
+const ROSTER_PATH = { 'arizona state': '/sports/ice-hockey/roster', 'augustana': '/sports/mens-hockey/roster' };
 const ROSTER_PATHS = ['/sports/mens-ice-hockey/roster', '/sports/ice-hockey/roster', '/sports/mens-hockey/roster', '/sports/hockey/roster', '/sports/m-hockey/roster', '/sports/mice/roster'];
 const MOBILE_UA = { 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' };
 const strip = s => decode(String(s || '').replace(/<[^>]+>/g, ' '));
@@ -233,14 +235,17 @@ export async function roster(key) {
   const domain = SITES[key];
   if (!domain) throw new Error('unknown team');
   let html = '', url = '';
-  for (const p of ROSTER_PATHS) {
+  const tryP = async (p) => {
     try {
-      const r = await fetch('https://' + domain + p, { headers: MOBILE_UA, redirect: 'follow', signal: AbortSignal.timeout(7000) });
-      if (!r.ok) continue;
+      const r = await fetch('https://' + domain + p, { headers: MOBILE_UA, redirect: 'follow', signal: AbortSignal.timeout(6000) });
+      if (!r.ok) return null;
       const h = await r.text();
-      if (h.length > 5000 && /roster/i.test(h)) { html = h; url = r.url || ('https://' + domain + p); break; }
-    } catch (e) { /* next path */ }
-  }
+      return (h.length > 5000 && /roster/i.test(h)) ? { h, u: r.url || ('https://' + domain + p) } : null;
+    } catch (e) { return null; }
+  };
+  let hit = await tryP(ROSTER_PATH[key] || ROSTER_PATHS[0]);
+  if (!hit) hit = (await Promise.all(ROSTER_PATHS.map(tryP))).find(Boolean);
+  if (hit) { html = hit.h; url = hit.u; }
   if (!html) return { site: 'https://' + domain, rosterUrl: '', players: [], error: 'roster page not found' };
   const base = new URL(url).origin;
   let players = parseClassic(html, base);
