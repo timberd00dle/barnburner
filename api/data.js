@@ -151,6 +151,12 @@ const TYPES = {
 export async function GET(request) {
   const params = new URL(request.url).searchParams;
   const type = params.get('type');
+  if (type === 'conflogo') {
+    try {
+      const url = await confLogo(params.get('c') || '');
+      return new Response(null, { status: 302, headers: { location: url, 'cache-control': 'public, max-age=86400, s-maxage=604800' } });
+    } catch (e) { return new Response(null, { status: 404, headers: { 'cache-control': 'public, s-maxage=3600' } }); }
+  }
   if (type === 'roster') {
     try {
       const body = await roster(params.get('team') || '');
@@ -170,6 +176,35 @@ export async function GET(request) {
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 502, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
+}
+
+
+// ---- conference logos ---------------------------------------------------
+// Known logo files first; for the rest, look on the conference site for its icon or header logo.
+const CONF_LOGO = {
+  'NCHC': { url: 'https://dbukjj6eu5tsf.cloudfront.net/nchchockey.com/images/responsive_2022/logo_main.svg' },
+  'Big Ten': { url: 'https://bigten.org/assets/img/logos/conference/logo-1000x1000-round.png' },
+  'Hockey East': { url: 'https://hockeyeastonline.com/images/design23/healogo-300.png' },
+  'ECAC Hockey': { site: 'https://ecachockey.com' },
+  'CCHA': { site: 'https://ccha.com' },
+  'Atlantic Hockey America': { site: 'https://atlantichockeyonline.com' },
+};
+async function confLogo(name) {
+  const c = CONF_LOGO[name];
+  if (!c) throw new Error('unknown conference');
+  if (c.url) return c.url;
+  const html = await text(c.site);
+  const abs = u => new URL(u.replace(/&amp;/g, '&'), c.site).href;
+  const pick = [
+    /<link[^>]+rel="apple-touch-icon[^"]*"[^>]+href="([^"]+)"/i,
+    /<link[^>]+href="([^"]+)"[^>]+rel="apple-touch-icon[^"]*"/i,
+    /<img[^>]+src="([^"]*\/logos?\/site\/[^"]+)"/i,
+    /<img[^>]+src="([^"]*logo_main[^"]*)"/i,
+    /<img[^>]+class="[^"]*logo[^"]*"[^>]+src="([^"]+)"/i,
+    /<link[^>]+rel="icon"[^>]+href="([^"]+\.(?:png|svg))"/i,
+  ];
+  for (const re of pick) { const m = html.match(re); if (m) return abs(m[1]); }
+  throw new Error('no logo found');
 }
 
 // ---- team-name key (identical to the app's canon()) ----
