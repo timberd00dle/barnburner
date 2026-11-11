@@ -493,7 +493,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
         var base = { name: name, num: r.number != null ? String(r.number) : (r.jersey || r.uniformNumber || ''), pos: r.position || '' };
         if (isG) goalies.push(Object.assign(base, { min: r.goalieMinutes, sv: r.saves, ga: r.goalsAllowed, svpct: (+r.saves + +r.goalsAllowed) > 0 ? fmt3(+r.saves / (+r.saves + +r.goalsAllowed)) : '' }));
         if (!isG || +r.goals || +r.assists) skaters.push(Object.assign({}, base, { g: r.goals, a: r.assists, sog: r.shots, pm: r.plusminus, pim: r.minutes, fo: (r.facewon != null && (+r.facewon + +r.facelost) > 0) ? r.facewon + '-' + r.facelost : '', blk: r.blk,
-          pen: (+r.count > 0 || +r.minutes > 0) ? (r.count != null ? r.count : '?') + ' (' + (r.minutes || 0) + ')' : '0' }));
+          pen: (+r.count > 0 || +r.minutes > 0) ? (r.count != null ? r.count : '?') + ' (' + (r.minutes || 0) + ' min)' : '0' }));
       });
       return { name: m.name || m.abbr || 'Team', abbr: m.abbr, home: m.home, skaters: skaters, goalies: goalies, teamStats: t.teamStats || null };
     }).filter(Boolean);
@@ -518,7 +518,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
     row('Power play', 'powerPlayGoals', function (x) { return (x.powerPlayGoals || 0) + '/' + (x.powerPlayOpportunities || 0); });
     row('Faceoffs won', 'facewon');
     row('Blocked shots', 'blk');
-    row('Penalties (min)', 'count', function (x) { return (x.count || 0) + ' (' + (x.minutes || 0) + ')'; });
+    row('Penalties', 'count', function (x) { return (x.count || 0) + ' (' + (x.minutes || 0) + ' minutes)'; });
     return { rows: src, shotsByPeriod: { a: String(A.shotsByPeriod || ''), h: String(H.shotsByPeriod || '') } };
   }
   function flipName(n) { var m = String(n || '').match(/^\s*([^,]+),\s*(.+?)\s*$/); return m ? m[2] + ' ' + m[1] : String(n || '').trim(); }
@@ -939,7 +939,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
           return '<div class="g" style="' + G + '">' + who(p) + (r ? '<span class="r s">' + r[gc.gp] + '</span><span class="r b">' + fmt3(r[gc.svpct]) + '</span><span class="r">' + (r[gc.gaa] == null ? '' : (+r[gc.gaa]).toFixed(2)) + '</span><span class="r">' + r[gc.so] + '</span>' : '<span class="r s">–</span><span class="r s">–</span><span class="r s">–</span><span class="r s">–</span>') + '</div>'; }).join('') + '</section>' : '';
       var src = ros && ros.source === 'school' ? 'Roster and photos: ' + (ros.site || '').replace(/^https?:\/\//, '') : ros && ros.source === 'ncaa-box' ? 'Roster from the latest NCAA box score (no photos for this school)' : 'Roster from season stats';
       return grp('Forwards', players.filter(function (p) { return p.group === 'F' || !p.group; })) + grp('Defense', players.filter(function (p) { return p.group === 'D'; })) + gHtml +
-        '<p class="note" style="margin-top:14px">' + esc(src) + '. Stats: College Hockey Inc. PIM is in the season stats as minutes only; game box scores show penalties (minutes).</p>';
+        '<p class="note" style="margin-top:14px">' + esc(src) + '. Stats: College Hockey Inc.</p>';
     }
     function scheduleHTML() {
       if (!sched) return '<p class="empty">Loading schedule…</p>';
@@ -1078,7 +1078,7 @@ pre.raw{font-size:11px;white-space:pre-wrap;word-break:break-word;background:var
           var gk = t.goalies.length ? '<div class="scroll" style="margin-top:8px"><table class="box"><thead><tr><th scope="col">GOALIE</th><th scope="col">MIN</th><th scope="col">SV</th><th scope="col">GA</th><th scope="col">SV%</th></tr></thead><tbody>' +
             t.goalies.map(function (r) { return '<tr><td>' + (r.num ? '<span class="mono" style="color:var(--sub)">' + esc(r.num) + '</span> ' : '') + esc(r.name) + '</td><td>' + esc(r.min) + '</td><td>' + esc(r.sv) + '</td><td>' + esc(r.ga) + '</td><td>' + esc(r.svpct) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
           return '<section class="blk"><h3 class="cond">' + esc(t.name) + '</h3>' + sk + gk + '</section>';
-        }).join('') + '<p class="note" style="margin-top:12px">PEN = penalties (penalty minutes).</p>';
+        }).join('') + '<p class="note" style="margin-top:12px">PEN = penalties (penalty minutes), e.g. 2 (4 min).</p>';
         return;
       }
       if (tab === 'plays') {
